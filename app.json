@@ -7,23 +7,41 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
+
+    "assetBundlePatterns": [
+      "assets/fonts/*",
+      "assets/**/*"
+    ],
+
+    "plugins": [
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/PlusJakartaSans-Regular.ttf",
+            "./assets/fonts/NotoSansDevanagari-Regular.ttf",
+            "./assets/fonts/NotoSansGujarati-Regular.ttf",
+            "./assets/fonts/NotoSansGurmukhi-Regular.ttf"
+          ]
+        }
+      ]
+    ],
+  
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mosamgor.multilangdemoapp"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.mosamgor.multilangdemoapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     }
   }
 }
+
