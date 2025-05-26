@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, StatusBar, StyleSheet, View, Text, AppState } from 'react-native';
 import { LanguageProvider } from './src/contexts/LanguageContext';
+import { FeedScreen } from './src/screens/FeedScreen';
 import DemoScreen from './src/screens/DemoScreen';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
@@ -11,6 +12,7 @@ SplashScreen.preventAutoHideAsync();
 
 export default function App() {
   const [appIsReady, setAppIsReady] = useState(false);
+  const [showDemo, setShowDemo] = useState(false);
 
   useEffect(() => {
     async function prepare() {
@@ -63,7 +65,7 @@ export default function App() {
     <LanguageProvider>
       <SafeAreaView style={styles.container} onLayout={onLayoutRootView}>
         <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-        <DemoScreen />
+        {showDemo ? <DemoScreen /> : <FeedScreen />}
       </SafeAreaView>
     </LanguageProvider>
   );
