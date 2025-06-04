@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Alert,
   SafeAreaView,
+  ViewToken,
 } from 'react-native';
 import { postStorage, Post } from '../services/postStorage';
 import { PostItem } from '../components/PostItem';
@@ -22,6 +23,9 @@ export const FeedScreen: React.FC<FeedScreenProps> = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [showCreatePost, setShowCreatePost] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
+  const [visibleItems, setVisibleItems] = useState<Set<string>>(new Set());
+  
+  const flatListRef = useRef<FlatList>(null);
 
   // Load posts from storage
   const loadPosts = useCallback(() => {
@@ -38,6 +42,28 @@ export const FeedScreen: React.FC<FeedScreenProps> = () => {
   useEffect(() => {
     loadPosts();
   }, [loadPosts]);
+
+  // Handle viewable items changed for auto-pause functionality
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const newVisibleItems = new Set<string>();
+    
+    viewableItems.forEach((item) => {
+      if (item.isViewable && item.item) {
+        newVisibleItems.add(item.item.id);
+      }
+    });
+    
+    setVisibleItems(newVisibleItems);
+    
+    // Log visibility changes for debugging
+    console.log('Visible posts:', Array.from(newVisibleItems));
+  }, []);
+
+  // Configuration for viewability
+  const viewabilityConfig = {
+    itemVisiblePercentThreshold: 50, // Item is considered visible when 50% is visible
+    minimumViewTime: 100, // Minimum time in ms before considering item visible
+  };
 
   // Refresh posts
   const handleRefresh = useCallback(async () => {
@@ -100,14 +126,19 @@ export const FeedScreen: React.FC<FeedScreenProps> = () => {
     );
   }, [loadPosts]);
 
-  // Render post item
-  const renderPost = useCallback(({ item }: { item: Post }) => (
-    <PostItem
-      post={item}
-      onDelete={handleDeletePost}
-      onEdit={handleEditPost}
-    />
-  ), [handleDeletePost, handleEditPost]);
+  // Render post item with visibility tracking
+  const renderPost = useCallback(({ item }: { item: Post }) => {
+    const isVisible = visibleItems.has(item.id);
+    
+    return (
+      <PostItem
+        post={item}
+        onDelete={handleDeletePost}
+        onEdit={handleEditPost}
+        isVisible={isVisible}
+      />
+    );
+  }, [handleDeletePost, handleEditPost, visibleItems]);
 
   // Render empty state
   const renderEmptyState = () => (
@@ -167,6 +198,7 @@ export const FeedScreen: React.FC<FeedScreenProps> = () => {
       {renderHeader()}
       
       <FlatList
+        ref={flatListRef}
         data={posts}
         renderItem={renderPost}
         keyExtractor={(item) => item.id}
@@ -181,6 +213,18 @@ export const FeedScreen: React.FC<FeedScreenProps> = () => {
         ListEmptyComponent={renderEmptyState}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={posts.length === 0 ? styles.emptyListContainer : undefined}
+        // Viewability tracking for auto-pause
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        // Performance optimizations
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={5}
+        updateCellsBatchingPeriod={100}
+        initialNumToRender={3}
+        windowSize={10}
+        // Scroll optimization
+        decelerationRate="normal"
+        scrollEventThrottle={16}
       />
 
       {/* Stats Footer */}
@@ -188,8 +232,14 @@ export const FeedScreen: React.FC<FeedScreenProps> = () => {
         <View style={styles.statsFooter}>
           <Text style={styles.statsText}>
             {posts.length} post{posts.length !== 1 ? 's' : ''} • {' '}
-            {posts.filter(p => p.embedMetadata).length} with embeds
+            {posts.filter(p => p.embedMetadata).length} with embeds • {' '}
+            {posts.filter(p => p.embedMetadata?.platform === 'youtube').length} YouTube videos
           </Text>
+          {visibleItems.size > 0 && (
+            <Text style={styles.visibilityText}>
+              {visibleItems.size} post{visibleItems.size !== 1 ? 's' : ''} visible
+            </Text>
+          )}
         </View>
       )}
     </SafeAreaView>
@@ -294,5 +344,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#657786',
     textAlign: 'center',
+    marginBottom: 2,
+  },
+  visibilityText: {
+    fontSize: 10,
+    color: '#aab8c2',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,14 @@ import { Post } from '../services/postStorage';
 import { LinkPreview } from './LinkPreview';
 import { EmbedWebView } from './EmbedWebView';
 import { embedApiService } from '../services/embedApi';
+import { useVideo } from '../contexts/VideoContext';
 
 interface PostItemProps {
   post: Post;
   onDelete?: (postId: string) => void;
   onEdit?: (post: Post) => void;
   style?: any;
+  isVisible?: boolean;
 }
 
 export const PostItem: React.FC<PostItemProps> = ({
@@ -24,10 +26,35 @@ export const PostItem: React.FC<PostItemProps> = ({
   onDelete,
   onEdit,
   style,
+  isVisible = true,
 }) => {
   const [showFullEmbed, setShowFullEmbed] = useState(false);
   const [embedHtml, setEmbedHtml] = useState<string | null>(null);
   const [loadingEmbed, setLoadingEmbed] = useState(false);
+  
+  const { autoPlayEnabled, setVideoVisibility } = useVideo();
+
+  const isYouTubeVideo = post.embedMetadata?.platform === 'youtube' && post.embedMetadata?.type === 'video';
+  const videoId = post.embedMetadata?.embedData?.videoId;
+  
+  // Create unique instance ID for this post's embed
+  const uniqueInstanceId = `post-${post.id}`;
+
+  // Handle visibility changes for auto-pause functionality
+  useEffect(() => {
+    if (isYouTubeVideo && videoId) {
+      // Use the unique player ID that combines video ID and instance ID
+      const uniquePlayerId = `${videoId}-post-${post.id}`;
+      setVideoVisibility(uniquePlayerId, isVisible);
+    }
+  }, [isVisible, isYouTubeVideo, videoId, post.id, setVideoVisibility]);
+
+  // Auto-load YouTube videos if auto-play is enabled
+  useEffect(() => {
+    if (isYouTubeVideo && autoPlayEnabled && isVisible && !showFullEmbed && !embedHtml) {
+      handlePreviewPress();
+    }
+  }, [isYouTubeVideo, autoPlayEnabled, isVisible, showFullEmbed, embedHtml]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -66,7 +93,7 @@ export const PostItem: React.FC<PostItemProps> = ({
         const html = await embedApiService.renderEmbed(post.url, {
           width: 350,
           height: 200,
-          autoplay: false,
+          autoplay: isYouTubeVideo && autoPlayEnabled,
           controls: true,
         });
         setEmbedHtml(html);
@@ -106,6 +133,46 @@ export const PostItem: React.FC<PostItemProps> = ({
         { text: 'Edit', onPress: () => onEdit?.(post) },
         { text: 'Delete', style: 'destructive', onPress: handleDelete },
       ]
+    );
+  };
+
+  const renderVideoPreview = () => {
+    if (!isYouTubeVideo) {
+      return (
+        <LinkPreview
+          metadata={post.embedMetadata!}
+          onPress={handlePreviewPress}
+          style={styles.preview}
+        />
+      );
+    }
+
+    // For YouTube videos, show enhanced preview with play button
+    return (
+      <TouchableOpacity
+        style={styles.youtubePreview}
+        onPress={handlePreviewPress}
+        activeOpacity={0.8}
+      >
+        <View style={styles.youtubeThumbnailContainer}>
+          {post.embedMetadata?.image && (
+            <View style={styles.youtubeThumbnail}>
+              <Text style={styles.thumbnailPlaceholder}>🎥</Text>
+            </View>
+          )}
+          <View style={styles.youtubePlayButton}>
+            <Text style={styles.playButtonText}>▶</Text>
+          </View>
+        </View>
+        <View style={styles.youtubeInfo}>
+          <Text style={styles.youtubeTitle} numberOfLines={2}>
+            {post.embedMetadata?.title || 'YouTube Video'}
+          </Text>
+          <Text style={styles.youtubeAuthor} numberOfLines={1}>
+            {post.embedMetadata?.author?.name || 'YouTube'} • {autoPlayEnabled ? 'Auto-play enabled' : 'Tap to play'}
+          </Text>
+        </View>
+      </TouchableOpacity>
     );
   };
 
@@ -149,13 +216,7 @@ export const PostItem: React.FC<PostItemProps> = ({
         )}
 
         {/* Embed Preview */}
-        {post.embedMetadata && !showFullEmbed && (
-          <LinkPreview
-            metadata={post.embedMetadata}
-            onPress={handlePreviewPress}
-            style={styles.preview}
-          />
-        )}
+        {post.embedMetadata && !showFullEmbed && renderVideoPreview()}
 
         {/* Full Embed */}
         {showFullEmbed && embedHtml && post.embedMetadata && (
@@ -175,6 +236,8 @@ export const PostItem: React.FC<PostItemProps> = ({
             <EmbedWebView
               metadata={post.embedMetadata}
               htmlContent={embedHtml}
+              autoplay={isYouTubeVideo && autoPlayEnabled}
+              instanceId={uniqueInstanceId}
               style={styles.webView}
               onError={(error) => {
                 console.error('WebView error:', error);
@@ -188,7 +251,9 @@ export const PostItem: React.FC<PostItemProps> = ({
         {/* Loading Embed */}
         {loadingEmbed && (
           <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Loading embed...</Text>
+            <Text style={styles.loadingText}>
+              {isYouTubeVideo ? 'Loading YouTube player...' : 'Loading embed...'}
+            </Text>
           </View>
         )}
       </View>
@@ -198,6 +263,7 @@ export const PostItem: React.FC<PostItemProps> = ({
         <Text style={styles.footerText}>
           {post.updatedAt !== post.createdAt && 'Edited • '}
           {post.embedMetadata?.platform && `${post.embedMetadata.platform} • `}
+          {isYouTubeVideo && isVisible && 'Video visible • '}
           Tap and hold for options
         </Text>
       </View>
@@ -283,6 +349,65 @@ const styles = StyleSheet.create({
   },
   preview: {
     marginBottom: 8,
+  },
+  youtubePreview: {
+    backgroundColor: '#000',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  youtubeThumbnailContainer: {
+    position: 'relative',
+    aspectRatio: 16 / 9,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  youtubeThumbnail: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a1a',
+  },
+  thumbnailPlaceholder: {
+    fontSize: 48,
+    color: '#666',
+  },
+  youtubePlayButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  playButtonText: {
+    fontSize: 20,
+    color: '#ff0000',
+    marginLeft: 3,
+  },
+  youtubeInfo: {
+    padding: 12,
+    backgroundColor: '#fff',
+  },
+  youtubeTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#14171a',
+    marginBottom: 4,
+  },
+  youtubeAuthor: {
+    fontSize: 14,
+    color: '#657786',
   },
   embedContainer: {
     marginBottom: 8,

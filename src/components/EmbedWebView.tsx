@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { EmbedMetadata } from '../services/embedApi';
+import { useVideoPlayer } from '../contexts/VideoContext';
 
 interface EmbedWebViewProps {
   metadata: EmbedMetadata;
@@ -17,9 +18,14 @@ interface EmbedWebViewProps {
   autoplay?: boolean;
   onError?: (error: string) => void;
   onLoad?: () => void;
+  // Add unique instance ID to differentiate between multiple instances of same video
+  instanceId?: string;
 }
 
 const { width: screenWidth } = Dimensions.get('window');
+
+// Generate unique instance ID if not provided
+let instanceCounter = 0;
 
 export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
   metadata,
@@ -28,6 +34,7 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
   autoplay = false,
   onError,
   onLoad,
+  instanceId,
 }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +42,32 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
   const webViewRef = useRef<WebView>(null);
 
   const isVideo = metadata.type === 'video';
+  const isYouTube = metadata.platform === 'youtube';
+  const videoId = metadata.embedData?.videoId || '';
+  
+  // Create unique instance ID for this embed
+  const uniqueInstanceId = useMemo(() => {
+    if (instanceId) return instanceId;
+    instanceCounter++;
+    return `instance-${instanceCounter}`;
+  }, [instanceId]);
+  
+  // Create unique player ID combining video ID and instance ID
+  const uniquePlayerId = useMemo(() => {
+    if (!videoId) return 'dummy';
+    return `${videoId}-${uniqueInstanceId}`;
+  }, [videoId, uniqueInstanceId]);
+
+  // Always call the hook - this fixes the "rendered fewer hooks" error
+  const videoPlayerHook = useVideoPlayer(
+    isYouTube && videoId ? uniquePlayerId : 'dummy', 
+    isYouTube && videoId ? uniquePlayerId : 'dummy'
+  );
+
+  // Only use the hook results if this is actually a YouTube video
+  const handlePlayerMessage = isYouTube && videoId ? videoPlayerHook.handlePlayerMessage : null;
+  const setVideoRef = isYouTube && videoId ? videoPlayerHook.setVideoRef : null;
+
   const defaultHeight = isVideo ? 200 : 150;
 
   // Calculate aspect ratio for videos
@@ -57,6 +90,11 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
   const handleLoadEnd = () => {
     setLoading(false);
     onLoad?.();
+    
+    // Set video ref after WebView loads for YouTube videos
+    if (isYouTube && setVideoRef && webViewRef.current) {
+      setVideoRef(webViewRef.current);
+    }
   };
 
   const handleError = (syntheticEvent: any) => {
@@ -71,6 +109,14 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
     try {
       const data = JSON.parse(event.nativeEvent.data);
       
+      // Handle YouTube player messages
+      if (isYouTube && handlePlayerMessage) {
+        if (data.type?.startsWith('youtube_player')) {
+          handlePlayerMessage(data);
+          return;
+        }
+      }
+      
       // Handle height updates from the WebView
       if (data.type === 'height' && data.height) {
         setWebViewHeight(Math.min(data.height, 400));
@@ -79,6 +125,12 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
       // Handle video events
       if (data.type === 'video') {
         console.log('Video event:', data.event);
+      }
+
+      // Handle navigation requests
+      if (data.type === 'navigation' && data.url) {
+        console.log('Navigation requested:', data.url);
+        // Could open in browser or handle differently
       }
     } catch (e) {
       // Ignore parsing errors
@@ -97,10 +149,12 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
           document.documentElement.offsetHeight
         );
         
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'height',
-          height: height
-        }));
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'height',
+            height: height
+          }));
+        }
       }
 
       // Send initial height
@@ -110,23 +164,25 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
       window.addEventListener('resize', sendHeight);
       
       // Listen for video events if it's a video embed
-      const videos = document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"]');
+      const videos = document.querySelectorAll('video');
       videos.forEach(video => {
-        if (video.tagName === 'VIDEO') {
-          video.addEventListener('loadedmetadata', sendHeight);
-          video.addEventListener('play', () => {
+        video.addEventListener('loadedmetadata', sendHeight);
+        video.addEventListener('play', () => {
+          if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
               type: 'video',
               event: 'play'
             }));
-          });
-          video.addEventListener('pause', () => {
+          }
+        });
+        video.addEventListener('pause', () => {
+          if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
               type: 'video',
               event: 'pause'
             }));
-          });
-        }
+          }
+        });
       });
 
       // Prevent external navigation
@@ -134,89 +190,118 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
         const target = e.target.closest('a');
         if (target && target.href && !target.href.startsWith('javascript:')) {
           e.preventDefault();
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'navigation',
-            url: target.href
-          }));
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'navigation',
+              url: target.href
+            }));
+          }
         }
       });
+
+      // For YouTube videos, ensure proper communication
+      ${isYouTube ? `
+        // Override console.log to capture YouTube API logs
+        const originalLog = console.log;
+        console.log = function(...args) {
+          originalLog.apply(console, args);
+          if (args[0] && typeof args[0] === 'string' && args[0].includes('YouTube')) {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'youtube_log',
+                message: args.join(' ')
+              }));
+            }
+          }
+        };
+      ` : ''}
 
       true; // Required for injected JavaScript
     })();
   `;
 
-  const webViewSource = {
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.4;
-            color: #333;
-            background: transparent;
-          }
-          
-          img, video, iframe {
-            max-width: 100%;
-            height: auto;
-          }
-          
-          iframe {
-            border: none;
-            border-radius: 8px;
-          }
-          
-          .embed-container {
-            width: 100%;
-            overflow: hidden;
-          }
-          
-          .video-container {
-            position: relative;
-            width: 100%;
-            height: 0;
-            padding-bottom: ${(1 / aspectRatio) * 100}%;
-          }
-          
-          .video-container iframe,
-          .video-container video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border-radius: 8px;
-          }
-          
-          a {
-            color: #1da1f2;
-            text-decoration: none;
-          }
-          
-          a:hover {
-            text-decoration: underline;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="embed-container">
-          ${htmlContent}
-        </div>
-      </body>
-      </html>
-    `,
-    baseUrl: 'https://localhost',
-  };
+  // Memoize webView source to prevent unnecessary re-renders
+  const webViewSource = useMemo(() => {
+    if (isYouTube) {
+      return {
+        html: htmlContent,
+        baseUrl: 'https://localhost',
+      };
+    }
+    
+    return {
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+          <style>
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              line-height: 1.4;
+              color: #333;
+              background: transparent;
+            }
+            
+            img, video, iframe {
+              max-width: 100%;
+              height: auto;
+            }
+            
+            iframe {
+              border: none;
+              border-radius: 8px;
+            }
+            
+            .embed-container {
+              width: 100%;
+              overflow: hidden;
+            }
+            
+            .video-container {
+              position: relative;
+              width: 100%;
+              height: 0;
+              padding-bottom: ${(1 / aspectRatio) * 100}%;
+            }
+            
+            .video-container iframe,
+            .video-container video {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              border-radius: 8px;
+            }
+            
+            a {
+              color: #1da1f2;
+              text-decoration: none;
+            }
+            
+            a:hover {
+              text-decoration: underline;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="embed-container">
+            ${htmlContent}
+          </div>
+        </body>
+        </html>
+      `,
+      baseUrl: 'https://localhost',
+    };
+  }, [isYouTube, htmlContent, aspectRatio]);
 
   if (error) {
     return (
@@ -244,7 +329,9 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
       {loading && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="small" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading embed...</Text>
+          <Text style={styles.loadingText}>
+            {isYouTube ? 'Loading YouTube player...' : 'Loading embed...'}
+          </Text>
         </View>
       )}
       
@@ -260,7 +347,7 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
         javaScriptEnabled={true}
         domStorageEnabled={true}
         allowsInlineMediaPlayback={true}
-        mediaPlaybackRequiresUserAction={!autoplay}
+        mediaPlaybackRequiresUserAction={!autoplay && !isYouTube}
         scrollEnabled={false}
         bounces={false}
         showsHorizontalScrollIndicator={false}
@@ -268,6 +355,7 @@ export const EmbedWebView: React.FC<EmbedWebViewProps> = ({
         originWhitelist={['*']}
         mixedContentMode="compatibility"
         allowsFullscreenVideo={true}
+        allowsBackForwardNavigationGestures={false}
       />
     </View>
   );

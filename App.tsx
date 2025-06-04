@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, StatusBar, StyleSheet, View, Text, AppState } from 'react-native';
 import { LanguageProvider } from './src/contexts/LanguageContext';
+import { VideoProvider } from './src/contexts/VideoContext';
 import { FeedScreen } from './src/screens/FeedScreen';
 import DemoScreen from './src/screens/DemoScreen';
 import * as SplashScreen from 'expo-splash-screen';
@@ -63,10 +64,12 @@ export default function App() {
 
   return (
     <LanguageProvider>
-      <SafeAreaView style={styles.container} onLayout={onLayoutRootView}>
-        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-        {showDemo ? <DemoScreen /> : <FeedScreen />}
-      </SafeAreaView>
+      <VideoProvider>
+        <SafeAreaView style={styles.container} onLayout={onLayoutRootView}>
+          <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+          {showDemo ? <DemoScreen /> : <FeedScreen />}
+        </SafeAreaView>
+      </VideoProvider>
     </LanguageProvider>
   );
 }

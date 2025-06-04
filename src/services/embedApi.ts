@@ -43,7 +43,7 @@ export interface OEmbedResponse {
 }
 
 class EmbedApiService {
-  private baseUrl = 'http://192.168.1.80:3001';
+  private baseUrl = 'http://192.168.1.48:3001';
 
   async extractMetadata(url: string): Promise<EmbedMetadata> {
     try {
